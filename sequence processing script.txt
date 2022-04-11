@@ -1,0 +1,62 @@
+for i in {91..93}; do
+  {
+  fastp -i rawdata-0104/LABY_M${i}_1.fq.gz -I rawdata-0104/LABY_M${i}_2.fq.gz \
+  -h fastp_reports/M${i}_merged.html -j fastp_reports/M${i}_merged.json \
+  -A -Q -f 18 -F 18 -3 -W 1 -M 30 -w 16 \
+  -m --merged_out merged_data/M${i}_Merged${i}_L001_R1_001.fastq.gz \
+  --overlap_len_require 10 --overlap_diff_limit 3 --overlap_diff_percent_limit 30 \
+  --dont_overwrite
+  } 
+done
+
+conda activate qiime2-2020.6
+#conda deactivate
+
+qiime tools import \
+  --type 'SampleData[SequencesWithQuality]' \
+  --input-path merged_data \
+  --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output-path merged-seqs.qza
+
+qiime demux summarize --i-data merged-seqs.qza --o-visualization merged-seqs.qzv
+
+qiime quality-filter q-score \
+ --i-demux merged-seqs.qza \
+ --o-filtered-sequences filtered-seqs.qza \
+ --o-filter-stats filter-stats.qza
+
+qiime demux summarize --i-data filtered-seqs.qza --o-visualization filtered-seqs.qzv
+
+qiime metadata tabulate --m-input-file filter-stats.qza --o-visualization filter-stats.qzv
+
+qiime tools import --type 'FeatureData[Sequence]' --input-path database/pr2_version_4.13.0_18S_mothur.fasta --output-path pr2_4.13_18S.qza
+
+qiime tools import --type 'FeatureData[Taxonomy]' --input-format HeaderlessTSVTaxonomyFormat --input-path database/pr2_version_4.13.0_18S_mothur.tax --output-path pr2_4.13_tax.qza
+
+nohup qiime deblur denoise-other --i-demultiplexed-seqs filtered-seqs.qza --i-reference-seqs pr2_4.13_18S.qza --p-trim-length 390 --p-min-reads 10 --p-jobs-to-start 40 --p-no-hashed-feature-ids --o-representative-sequences deblur390-rep-seqs.qza --o-table deblur390-table.qza --p-sample-stats --o-stats deblur390-stats.qza &
+
+qiime deblur visualize-stats --i-deblur-stats deblur390-stats.qza --o-visualization deblur390-stats.qzv
+
+qiime feature-table summarize --i-table deblur390-table.qza --o-visualization deblur390-table.qzv
+
+nohup qiime feature-classifier classify-consensus-blast --i-query deblur390-rep-seqs.qza --i-reference-reads pr2_4.13_18S.qza --i-reference-taxonomy pr2_4.13_tax.qza --o-classification deblur390-taxonomy-blast.qza &
+###nohup qiime feature-classifier classify-consensus-blast --i-query deblur390-rep-seqs.qza --i-reference-reads silva-138-99-seqs.qza --i-reference-taxonomy silva-138-99-tax.qza --o-classification deblur390-taxonomy-blast.qza &
+
+qiime metadata tabulate --m-input-file deblur390-taxonomy-blast.qza --o-visualization deblur390-taxonomy-blast.qzv
+
+qiime taxa filter-table --i-table deblur390-table.qza --i-taxonomy deblur390-taxonomy-blast.qza --p-include Labyrinthulomycetes --o-filtered-table deblur390-table-laby.qza
+
+qiime taxa filter-seqs --i-sequences deblur390-rep-seqs.qza --i-taxonomy deblur390-taxonomy-blast.qza --p-include Labyrinthulomycetes --o-filtered-sequences deblur390-rep-seqs-laby.qza
+
+qiime feature-table summarize --i-table deblur390-table-laby.qza --o-visualization deblur390-table-laby.qzv
+
+qiime diversity alpha-rarefaction --i-table deblur390-table-laby.qza --p-max-depth 3000 --p-steps 30 --o-visualization laby-rarefaction-curves.qzv
+
+qiime feature-table rarefy --i-table deblur390-table-laby.qza --p-sampling-depth 1401 --o-rarefied-table deblur390-table-laby-rarefied1401.qza
+
+qiime feature-table summarize --i-table deblur390-table-laby-rarefied1401.qza --o-visualization deblur390-table-laby-rarefied1401.qzv
+
+qiime taxa barplot --i-table deblur390-table-laby-rarefied1401.qza --i-taxonomy deblur390-taxonomy-blast.qza --m-metadata-file metadata.txt --o-visualization barplot-rarefied1401.qzv
+
+qiime diversity core-metrics --i-table deblur390-table-laby.qza --p-sampling-depth 1401 --m-metadata-file metadata.txt --p-n-jobs 40 --output-dir beta-diversity-rarefied1401
+
